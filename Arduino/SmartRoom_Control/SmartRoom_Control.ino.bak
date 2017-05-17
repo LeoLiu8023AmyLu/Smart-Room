@@ -1,0 +1,483 @@
+/*
+	步进电机：
+	A1		-> Arduino P22
+	B1		-> Arduino P23
+	C1		-> Arduino P24
+	D1		-> Arduino P25
+
+	风扇
+	fan1	-> Arduino P2
+
+	门 舵机
+	PWM_pin	-> Arduino P27
+
+	灯 继电器控制
+	LIGHT	-> Arduino P27
+
+	LED三色灯
+	LED_R	-> Arduino P29
+	LED_G	-> Arduino P30
+	LED_B	-> Arduino P31
+
+
+
+	命令定义：
+
+	窗帘：
+		A 拉起窗帘
+		B 放下窗帘
+		后边加圈数，设置为2比较适中
+		A2 拉起
+		B2 放下
+	门：
+		C+数字 为开门的角度 一般是[1,6]
+		6为关闭门
+		1为开启门
+		D为开启门后5S钟后再关闭门
+	灯：
+		LO为开灯
+		LF为关灯
+
+	风扇：
+		F+数字  一般取值[0,9] 0为关闭 9为最大转速
+
+	LED 三色灯：
+		E+数字
+		0 为关闭
+		1 为红色
+		2 为绿色
+		3 为蓝色
+		4 为黄色
+		5 为紫色
+		6 为青色
+		7 为白色
+
+	模式：
+	起床模式 G (开灯、开窗帘)
+	离开模式 Q (关闭所有设备)
+*/
+#include <Arduino.h>
+#include "RC522.h"
+#include <SPI.h>
+#include <Wire.h>
+////////////////////////////////////////////////////////////////////////////////////////////
+
+#define A1 22			// 步进电机
+#define B1 23
+#define C1 24
+#define D1 25
+#define PWM_pin 26		//舵机
+#define LIGHT 27		//电灯的继电器
+#define fan1 2			//风扇调节
+#define LED_R 29		//三色灯
+#define LED_G 30
+#define LED_B 31
+//////////////////////////////////////////////////////////////////////////////////////////
+int num1;
+int time1 = 3;
+int Circle;
+int pulsewidth = 0;				//舵机高电平时间
+unsigned char serNum[5];        //RFID
+int PotBuffer = 0;
+String Comtext;
+/////////////////////////////////////////////////////////////////////////////////////////////
+////////       初始化  //////////////////
+void setup()
+{
+
+  // I2C 通信初始化
+  Wire.begin(3);        // join i2c bus (address optional for master)
+  // I2C 通信端口设为 地址3
+  Wire.onReceive(receiveEvent);	//接收从机发过来的字符串
+
+  // 通信速率设为 9600
+  Serial.begin(9600);
+
+  //设置引脚为输出引脚
+  pinMode(A1, OUTPUT);
+  pinMode(B1, OUTPUT);
+  pinMode(C1, OUTPUT);
+  pinMode(D1, OUTPUT);
+  pinMode(PWM_pin, OUTPUT);	// 舵机
+  pinMode(LIGHT, OUTPUT);	// 灯-继电器
+  pinMode(fan1, OUTPUT);		// 风扇
+  pinMode(LED_R, OUTPUT);	// LED 红色
+  pinMode(LED_G, OUTPUT);	// LED 绿色
+  pinMode(LED_B, OUTPUT);	// LED 蓝色
+  //SPI 通信初始化
+  SPI.begin();
+  pinMode(chipSelectPin, OUTPUT);       // Set digital pin 10 as OUTPUT to connect it to the RFID /ENABLE pin
+  digitalWrite(chipSelectPin, LOW);     // Activate the RFID reader
+  pinMode(NRSTPD, OUTPUT);              // Set digital Reset , Not Reset and Power-down
+  MFRC522_Init();						//初始化RFID
+}
+////////  Loop 函数开始 ---->>     /////
+
+void loop()
+{
+  while (Serial.available()) {
+
+
+
+    ///////////////////////   窗帘控制 ////////////////////////////////////
+    char inChar = (char)Serial.read();
+    if (inChar == 'A' || inChar == 'a' )		// 步进电机正转
+    {
+      Serial.print("  Up The Curtain$");
+      delay(50);
+      while (Serial.available())
+      {
+        char num1 = (char)Serial.read();
+        //Serial.print("Circle number:");   //
+        //Serial.println(num1);
+        //Serial.println((int)num1);
+        int num2 = (512 * ((int)num1 - 48));
+        //Serial.println(num2);
+        circle(num2, 1);
+        delay(1000);
+      }
+    }
+    else  if (inChar == 'B' || inChar == 'b')	// 步进电机反转
+    {
+      Serial.print("  Down The Curtain$");
+      delay(50);
+      while (Serial.available())
+      {
+        char num1 = (char)Serial.read();
+        //Serial.print("Circle number:");
+        //Serial.println(num1);
+        //Serial.println((int)num1);
+        int num2 = (512 * ((int)num1 - 48));
+        //Serial.println(num2);
+        circle(num2, 0);
+        delay(1000);
+      }
+    }
+    ///////////////        门 控制           /////////////
+    else if (inChar == 'C' || inChar == 'c')		// 舵机控制
+    {
+      Serial.println("  Open The Door$");
+      delay(50);
+      while (Serial.available())
+      {
+        char num1 = (char)Serial.read();
+        int num2 = ((int)num1 - 48);
+        //Serial.println(num2);
+        pulse(20 * num2);
+        delay(10);
+
+      }
+    }
+    //////////////    Door 开门 5S钟后再关门 //////////////////////
+    else if (inChar == 'D' || inChar == 'd')		// 舵机控制
+    {
+      Serial.print("  Open The Door$");
+      delay(50);
+      pulse(20 * 1);                                          
+      delay(5000);
+      pulse(20 * 6);  
+    }
+    //////////////////   Light  灯光 继电器     ////////////////////////
+    else if (inChar == 'L' || inChar == 'l')		// 继电器 -- > 灯
+    {
+      delay(50);
+      while (Serial.available())
+      {
+        char charlight = (char)Serial.read();
+        if (charlight == 'O' || charlight == 'o')		// 继电器灯开
+        {
+          Serial.println("  Turn On The Light$");
+          digitalWrite (LIGHT, HIGH);
+        }
+        else if (charlight == 'F' || charlight == 'f')		// 继电器灯关
+        {
+          Serial.println("  Turn Off The Light$");
+          digitalWrite (LIGHT, LOW);
+        }
+      }
+    }
+    /////////////       Fan   风扇        /////////////////////////////////////////////////////
+    else if (inChar == 'F' || inChar == 'f')		// 控制电扇转速
+    {
+      Serial.println("  Oprate the Electric Fan$");
+      delay(50);
+      while (Serial.available())
+      {
+        char num1 = (char)Serial.read();
+        int num2 = ((int)num1 - 48) * 250 / 9;
+        //Serial.println(num2);
+        analogWrite(fan1, num2);			             //PWM风扇调节
+        delay(10);
+      }
+    }
+    /////////////////////////////////////////////////////////////////////////////////////
+    /////////////////      LED 三色    ////////////////////////////
+    else if (inChar == 'E' || inChar == 'e')		// 三色 LED
+    {
+      //Serial.println("turn on LED ");
+      delay(50);
+      while (Serial.available())
+      {
+        char num1 = (char)Serial.read();
+        switch (num1 - 48)
+        {
+          case 0:							// Light Off
+            digitalWrite(LED_R, HIGH);
+            digitalWrite(LED_G, HIGH);
+            digitalWrite(LED_B, HIGH);
+            Serial.print("  3 Color LED->Off$");
+            break;
+          case 1:							//红色
+            digitalWrite(LED_R, LOW);
+            digitalWrite(LED_G, HIGH);
+            digitalWrite(LED_B, HIGH);
+            Serial.print("  3 Color LED->Red$");
+            break;
+          case 2:							//绿色
+            digitalWrite(LED_R, HIGH);
+            digitalWrite(LED_G, LOW);
+            digitalWrite(LED_B, HIGH);
+            Serial.print("  3 Color LED->Green$");
+            break;
+          case 3:							//蓝色
+            digitalWrite(LED_R, HIGH);
+            digitalWrite(LED_G, HIGH);
+            digitalWrite(LED_B, LOW);
+            Serial.print("  3 Color LED->Blue$");
+            break;
+          case 4:							//黄色
+            digitalWrite(LED_R, LOW);
+            digitalWrite(LED_G, LOW);
+            digitalWrite(LED_B, HIGH);
+            Serial.print("  3 Color LED->Yellow$");
+            break;
+          case 5:							//紫色
+            digitalWrite(LED_R, LOW);
+            digitalWrite(LED_G, HIGH);
+            digitalWrite(LED_B, LOW);
+            Serial.print("  3 Color LED->Purple$");
+            break;
+          case 6:							//青色
+            digitalWrite(LED_R, HIGH);
+            digitalWrite(LED_G, LOW);
+            digitalWrite(LED_B, LOW);
+            Serial.print("  3 Color LED->Cyan$");
+            break;
+          case 7:							//白色
+            digitalWrite(LED_R, LOW);
+            digitalWrite(LED_G, LOW);
+            digitalWrite(LED_B, LOW);
+            Serial.print("  3 Color LED->White$");
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    ///////////////////////////////////////////////////////////////////////////////
+    ////////////////     Mode  模式选择   /////////////////////////
+    else if (inChar == 'G' || inChar == 'g')			//起床模式
+    {
+      Serial.print("  Good Morming Get up!!$");
+      delay(50);
+      digitalWrite(LIGHT, HIGH);							//开灯
+      int num2 = (512 * (2));							//开窗帘
+      circle(num2, 1);
+      delay(1000);
+    }
+    else if (inChar == 'Q' || inChar == 'q')			//离开模式
+    {
+      Serial.print("  See you Later~$");
+      delay(50);
+      digitalWrite(LIGHT, LOW);						//关灯
+      analogWrite(fan1, 0);						//关闭风扇
+      digitalWrite(LED_R, HIGH);					//关闭三色灯
+      digitalWrite(LED_G, HIGH);
+      digitalWrite(LED_B, HIGH);
+      int num2 = (512 * (2));						//拉窗帘
+      circle(num2, 0);
+      delay(1000);
+    }
+  }
+  //////////////////////////////////////////////////////////////////////////////
+  RFID();     //门禁系统
+}
+///////////          END         //////////////////////////////////////////////////
+///////////       主函数结束      //////////////////////////////////////////
+
+
+///////////////   其他调用函数 ////////////////////////////
+
+
+////////////////   I2C 通信 接收数据    ////////////////////////
+// New one  I2C 
+void receiveEvent(int numBytes)
+{
+
+  while (Wire.available())	// slave may send less than requested
+  {
+    char com = Wire.read(); // receive a byte as character
+    Comtext += com;
+    //delay(0);
+    /*  Test I2C function
+    Serial.print("--->");
+    Serial.println(Comtext);
+    Serial.println(" ");
+    */
+  }
+  if (Comtext.length()>32)
+  {
+    Serial.print(Comtext);		// print the character
+    Comtext = "";
+  }
+  delay(50);				//接收数据周期
+}
+
+
+///////////////  步进电机  相位函数 //////////////////
+
+
+void Phase_A()
+{
+  digitalWrite(A1, HIGH);		               //A1引脚高电平
+  digitalWrite(B1, LOW);
+  digitalWrite(C1, LOW);
+  digitalWrite(D1, LOW);
+}
+void Phase_B()
+{
+  digitalWrite(A1, LOW);
+  digitalWrite(B1, HIGH);		              //B1引脚高电平
+  digitalWrite(C1, LOW);
+  digitalWrite(D1, LOW);
+}
+
+void Phase_C()
+{
+  digitalWrite(A1, LOW);
+  digitalWrite(B1, LOW);
+  digitalWrite(C1, HIGH);		             //C1引脚高电平
+  digitalWrite(D1, LOW);
+}
+
+void Phase_D()
+{
+  digitalWrite(A1, LOW);
+  digitalWrite(B1, LOW);
+  digitalWrite(C1, LOW);
+  digitalWrite(D1, HIGH);		             //D1引脚高电平
+}
+
+
+/////////////////////////////////////////////////////////////////
+////////////////// 步进电机步进固定角度/////////////////////////
+void circle(int num, int direction1)
+{
+
+  if (direction1 == 1)
+  {
+    for (Circle = 0; Circle < num; Circle++)
+    {
+      Phase_A();			//设置A相位
+      delay(time1);			//改变延时可改变旋转速度
+
+      Phase_B();			//设置B相位
+      delay(time1);
+
+      Phase_C();			//设置C相位
+      delay(time1);
+
+      Phase_D();			//设置D相位
+      delay(time1);
+    }
+  }
+  else
+  {
+    for (Circle = num; Circle > 0; Circle--)
+    {
+      Phase_D();			//设置A相位
+      delay(time1);			//改变延时可改变旋转速度
+
+      Phase_C();			//设置B相位
+      delay(time1);
+
+      Phase_B();			//设置C相位
+      delay(time1);
+
+      Phase_A();			//设置D相位
+      delay(time1);
+    }
+  }
+}
+
+
+//////////////////////////////////////////////////////////////////
+////////     舵机     //////////////////////////////////////////
+void pulse(int angle)			        //设置舵机角度为angle
+{
+  for (int time1 = 18; time1 > 0; time1--)		//18是为了可以执行完毕
+  {
+    pulsewidth = int ((angle * 11) + 500);	  //计算高电平时间
+    digitalWrite(PWM_pin, HIGH);			//设置高电平
+    delayMicroseconds(pulsewidth);		//延时pulsewidth （us）
+    digitalWrite(PWM_pin, LOW);			//设置低电平
+    delay(20 - pulsewidth / 1000);			//延时20-pulsewidth/1000 （ms）
+  }
+}
+
+
+////////////////////////////////////////////////////////////////////////
+/////////////////          执行门禁系统     //////////////////
+void RFID()
+{
+  unsigned char status;
+  unsigned char str[MAX_LEN];
+  // Search card, return card types
+  status = MFRC522_Request(PICC_REQIDL, str);
+  if (status == MI_OK)			                      //读取到ID卡时候
+  {
+    status = MFRC522_Anticoll(str);
+    // str[0..3]: serial number of the card
+    // str[4]: XOR checksum of the SN.
+    if (status == MI_OK)
+    {
+      memcpy(serNum, str, 5);
+      Serial.print("ID:");
+      ShowCardID(serNum);
+      //Serial.print("$");
+      // Check people associated with card ID
+      unsigned char* id = serNum;
+      if ( id[0] == 0x13 && id[1] == 0xA6 && id[2] == 0x13 && id[3] == 0xC5)
+      {
+        digitalWrite(LIGHT, LOW);
+        Serial.print("The Host 1!$");
+        pulse(20 * 1); // C1
+        delay(4000);  // 4 seconds
+        pulse(20 * 6); //C6
+      }
+      else if (id[0] == 0xAA && id[1] == 0xEA && id[2] == 0xF4 && id[3] == 0xB8)
+      {
+        digitalWrite(LIGHT, LOW);
+        Serial.print("The Host 2!$");
+      }
+      else
+      {
+        Serial.print("Stranger!$");
+      }
+
+    }
+
+  }
+  MFRC522_Halt();			//command the card into sleep mode
+  delay(500);
+}
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,187 @@
+#include "LCD12864_S.h"
+
+int LCD12864_SCLK_PORT = 10;			//E引脚串行模式别名			
+int LCD12864_SID_PORT = 11;			//RW引脚串行模式别名
+int LCD12864_CS_PORT = 12;			//RS引脚串行模式别名  
+
+//********************************************************************
+//LCD12864清屏
+//********************************************************************
+void LCD12864_Clear()
+{
+	LCD12864_COM_Write(0x01);
+}
+
+//********************************************************************
+//LCD12864地址设置
+//********************************************************************
+void LCD12864_SET_Address( unsigned char i,unsigned char j)
+{
+	switch(i)
+	{
+		case 1:
+			LCD12864_COM_Write(0x80+(j-1));
+			break;
+		case 2:
+			LCD12864_COM_Write(0x90+(j-1));
+			break;
+		case 3:
+			LCD12864_COM_Write(0x88+(j-1));
+			break;
+		case 4:
+			LCD12864_COM_Write(0x98+(j-1));
+			break;
+		default: break;
+	}
+}
+
+/*************************************************************************************
+发送一个字节
+*************************************************************************************/
+void LCD12864_SendByte(unsigned char bbyte) //发送一个字节
+{
+	unsigned char i;
+	for(i=0;i<8;i++)
+	{
+		if((bbyte&0x80) == 0)		//取出最高位
+		{
+			digitalWrite(LCD12864_SID_PORT,LOW); 
+		}
+		else
+		{
+			digitalWrite(LCD12864_SID_PORT,HIGH); 
+		}
+		
+		digitalWrite(LCD12864_SCLK_PORT, LOW);
+		delayMicroseconds(1);
+		digitalWrite(LCD12864_SCLK_PORT, HIGH);
+		delayMicroseconds(1);
+		digitalWrite(LCD12864_SCLK_PORT, LOW);
+		delayMicroseconds(1);
+		bbyte<<=1; //左移
+	}  
+}
+
+//********************************************************************
+//检测忙信号写入命令字 ddate 为待写入的命令字
+//********************************************************************
+void LCD12864_COM_Write( unsigned char ddata )	
+{
+	unsigned char Hdata,Ldata;  
+	Hdata=ddata&0xf0;	//取高四位
+	Ldata=(ddata<<4)&0xf0;  //取低四位
+	LCD12864_SendByte(0xf8);//发送起始信号
+	delayMicroseconds(1);   //延时是必须的
+	LCD12864_SendByte(Hdata);//发送高四位
+	delayMicroseconds(1);    //延时是必须的
+	LCD12864_SendByte(Ldata);//发送低四位
+	delayMicroseconds(1);    //延时是必须的
+}
+
+//********************************************************************
+//数据写入		ddata  为待写入的8位数据
+//********************************************************************
+void LCD12864_Data_Write(unsigned char ddata)
+{
+	unsigned char Hdata,Ldata;  
+	Hdata=ddata&0xf0;		  //取高四位
+	Ldata=(ddata<<4)&0xf0;  //取低四位
+	LCD12864_SendByte(0xfa);	  //发送起始信号
+	delayMicroseconds(1); //延时是必须的
+	LCD12864_SendByte(Hdata);	      //发送高四位
+	delayMicroseconds(1);  //延时是必须的
+	LCD12864_SendByte(Ldata);		  //发送低四位
+	delayMicroseconds(1);  //延时是必须的	
+}
+
+
+//*************************************************************************************
+//写连续字符函数
+//*************************************************************************************
+void LCD12864_write_word(const char *s)
+{
+	while(*s>0)
+	{
+		LCD12864_Data_Write(*s);
+		s++;
+        delay(1);
+	}
+}
+
+
+//********************************************************************
+//LCD12864初始化
+//********************************************************************
+void LCD12864_Reset()
+{
+	pinMode(LCD12864_SCLK_PORT,OUTPUT);
+	pinMode(LCD12864_SID_PORT,OUTPUT);
+	pinMode(LCD12864_CS_PORT,OUTPUT);
+
+	digitalWrite(LCD12864_CS_PORT, HIGH);
+
+	delay(100); /*适当延时待LCD自动复位完成*/
+	LCD12864_COM_Write(0x30); /*使用8位并口通讯*/
+	delay(10);
+	LCD12864_COM_Write(0x30); /*使用8位并口通讯*/
+	delay(10);
+	LCD12864_COM_Write(0x0c); /*显示开及光标设置*/
+	delay(10);
+	LCD12864_COM_Write(0x01); /*显示清屏*/
+	delay(30);
+	LCD12864_COM_Write(0x06); /*DDRAM的地址计数器（AC）加1*/
+	delay(30);	
+}
+
+
+void LCD12864_PHOTO_SET()
+{
+	LCD12864_COM_Write(0x36);
+	delay(10);
+	LCD12864_COM_Write(0x36);
+	delay(10);
+}
+
+void LCD12864_HAIZI_SET()
+{
+	LCD12864_COM_Write(0x30);
+	delay(10);
+	LCD12864_COM_Write(0x30);
+	delay(10);
+}
+
+void LCD12864_PHOTO_WRITE(const unsigned char *img)
+{
+	unsigned char x,y,i,j;
+	unsigned int k=0;
+	y=0x80; /*设置起始 绘图区的 Y地址坐标*/
+	x=0x80; /*设置起始 绘图区的 X地址坐标*/
+	for(i=0;i<32;i++)
+	{  
+		/*写上半部*/
+		LCD12864_COM_Write(y);
+		LCD12864_COM_Write(x);
+		for(j=0;j<16;j++)
+		{
+			LCD12864_Data_Write(img[k]);
+			k++;
+		}
+		y++;
+	}
+
+	y=0x80; /*设置起始 绘图区的 Y地址坐标*/
+	x=0x88; /*设置起始 绘图区的 X地址坐标*/
+	for(i=0;i<32;i++)
+	{  
+		/*写下半部*/
+		LCD12864_COM_Write(y);
+		LCD12864_COM_Write(x);
+		for(j=0;j<16;j++)
+		{
+			LCD12864_Data_Write(img[k]);
+			k++;
+		}
+		y++;
+	}
+
+}
